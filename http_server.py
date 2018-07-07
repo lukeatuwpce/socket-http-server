@@ -1,3 +1,5 @@
+import mimetypes
+import os
 import socket
 import sys
 
@@ -17,7 +19,7 @@ def response_ok(body=b"This is a minimal response", mimetype=b"text/plain"):
         <html><h1>Welcome:</h1></html>\r\n
         '''
     """
-    pass
+    return b'HTTP/1.1 200 OK\r\nContent-Type: ' + mimetype + b'\r\n\r\n' + body
 
 
 def parse_request(request):
@@ -26,18 +28,51 @@ def parse_request(request):
 
     This server only handles GET requests, so this method shall raise a
     NotImplementedError if the method of the request is not GET.
+
+    Tokenize/parse:
+
+    command uri version
+    headers (ignored)
+
+    e.g.:
+    GET / HTTP/1.1
+    Host: localhost
+
+    Version 1.0 and "connection: close" are not supported/honored.
     """
-    pass
+
+    received = request.split(" ")
+    if len(received) != 3:
+        raise NotImplementedError
+
+    command = received.pop(0)
+    uri = received.pop(0)
+    version = received.pop(0)
+    print(f'command {command} uri {uri} version {version}', file=sys.stderr)
+    # Remainder unparsed, though 1.1 requries Host.
+    # This means we're not closing 1.0 connections or
+    # honoring connection: close for 1.1.
+
+    if command != "GET":
+        for char in command:
+            print(f"{char} : {ord(char)}", file=sys.stderr)
+        raise NotImplementedError();
+    if not (version == "HTTP/1.1"):
+        for char in version:
+            print(f"{char} : {ord(char)}", file=sys.stderr)
+        raise NotImplementedError();
+
+    return uri
 
 
 def response_method_not_allowed():
     """Returns a 405 Method Not Allowed response"""
-    pass
+    return b'''HTTP/1.1 405 Method Not Allowed\r\n\r\n'''
 
 
 def response_not_found():
     """Returns a 404 Not Found response"""
-    pass
+    return b'''HTTP/1.1 404 Not Found\r\n\r\n'''
     
 
 def resolve_uri(uri):
@@ -74,8 +109,22 @@ def resolve_uri(uri):
     # TODO: Fill in the appropriate content and mime_type give the URI.
     # See the assignment guidelines for help on "mapping mime-types", though
     # you might need to create a special case for handling make_time.py
-    content = b"not implemented"
-    mime_type = b"not implemented"
+
+    path = 'webroot' + uri
+
+    try:
+        with open(path) as fh:
+            content = fh.read().encode()
+        mime_type = mimetypes.guess_type(path)[0].encode()
+    except IsADirectoryError:
+        """ The directory listing could be embellished as text/html
+        content = ('<html>' + '<br>'.join(os.listdir(path)) + '</html>').encode()
+        mime_type = b'text/html'
+        """
+        content = ('\n'.join(os.listdir(path))).encode()
+        mime_type = b'text/plain'
+    except FileNotFoundError:
+        raise NameError
 
     return content, mime_type
 
@@ -95,11 +144,22 @@ def server(log_buffer=sys.stderr):
             try:
                 print('connection - {0}:{1}'.format(*addr), file=log_buffer)
                 while True:
-                    data = conn.recv(16)
+                    data = conn.recv(4096)
                     print('received "{0}"'.format(data), file=log_buffer)
                     if data:
-                        print('sending data back to client', file=log_buffer)
-                        conn.sendall(data)
+                        response = ""
+                        try:
+                            uri = parse_request(data.decode().strip())
+                            uri_content, uri_mime = resolve_uri(uri)
+                            response = response_ok(uri_content, uri_mime)
+                        except NotImplementedError:
+                            response = response_method_not_allowed()
+                        #except NameError:
+                            #response = response_not_found()
+
+                        if response:
+                            conn.sendall(response)
+
                     else:
                         msg = 'no more data from {0}:{1}'.format(*addr)
                         print(msg, log_buffer)
