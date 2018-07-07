@@ -1,5 +1,6 @@
 import mimetypes
 import os
+import re
 import socket
 import sys
 
@@ -41,25 +42,22 @@ def parse_request(request):
     Version 1.0 and "connection: close" are not supported/honored.
     """
 
-    received = request.split(" ")
+    received = (request.split('\r|\n'))[0].split()  # Discard headers and tokenize
+
     if len(received) != 3:
+        print(received, file=sys.stderr)  # XXX
         raise NotImplementedError
 
     command = received.pop(0)
     uri = received.pop(0)
     version = received.pop(0)
-    print(f'command {command} uri {uri} version {version}', file=sys.stderr)
     # Remainder unparsed, though 1.1 requries Host.
     # This means we're not closing 1.0 connections or
     # honoring connection: close for 1.1.
 
     if command != "GET":
-        for char in command:
-            print(f"{char} : {ord(char)}", file=sys.stderr)
         raise NotImplementedError();
     if not (version == "HTTP/1.1"):
-        for char in version:
-            print(f"{char} : {ord(char)}", file=sys.stderr)
         raise NotImplementedError();
 
     return uri
@@ -113,8 +111,8 @@ def resolve_uri(uri):
     path = 'webroot' + uri
 
     try:
-        with open(path) as fh:
-            content = fh.read().encode()
+        with open(path, "rb") as fh:
+            content = fh.read()
         mime_type = mimetypes.guess_type(path)[0].encode()
     except IsADirectoryError:
         """ The directory listing could be embellished as text/html
@@ -149,13 +147,17 @@ def server(log_buffer=sys.stderr):
                     if data:
                         response = ""
                         try:
-                            uri = parse_request(data.decode().strip())
+                            uri = parse_request(data.decode())
                             uri_content, uri_mime = resolve_uri(uri)
                             response = response_ok(uri_content, uri_mime)
                         except NotImplementedError:
                             response = response_method_not_allowed()
-                        #except NameError:
-                            #response = response_not_found()
+                        except NameError:
+                            response = response_not_found()
+                        except Exception as e:
+                            # Close connection.
+                            print('unhandled exception: ' + e, file=log_buffer)
+                            break
 
                         if response:
                             conn.sendall(response)
