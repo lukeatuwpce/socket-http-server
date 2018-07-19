@@ -44,8 +44,7 @@ def parse_request(request):
 
     received = (request.split('\r|\n'))[0].split()  # Discard headers and tokenize
 
-    if len(received) != 3:
-        print(received, file=sys.stderr)  # XXX
+    if len(received) < 3:
         raise NotImplementedError
 
     command = received.pop(0)
@@ -101,9 +100,6 @@ def resolve_uri(uri):
 
     """
 
-    # TODO: Raise a NameError if the requested content is not present
-    # under webroot.
-
     # TODO: Fill in the appropriate content and mime_type give the URI.
     # See the assignment guidelines for help on "mapping mime-types", though
     # you might need to create a special case for handling make_time.py
@@ -141,32 +137,40 @@ def server(log_buffer=sys.stderr):
             conn, addr = sock.accept()  # blocking
             try:
                 print('connection - {0}:{1}'.format(*addr), file=log_buffer)
+
+                data = ""
+                # One request may span recvs
                 while True:
-                    data = conn.recv(4096)
-                    print('received "{0}"'.format(data), file=log_buffer)
-                    if data:
-                        response = ""
-                        try:
-                            uri = parse_request(data.decode())
-                            uri_content, uri_mime = resolve_uri(uri)
-                            response = response_ok(uri_content, uri_mime)
-                        except NotImplementedError:
-                            response = response_method_not_allowed()
-                        except NameError:
-                            response = response_not_found()
-                        except Exception as e:
-                            # Close connection.
-                            print('unhandled exception: ' + e, file=log_buffer)
-                            break
-
-                        if response:
-                            conn.sendall(response)
-
-                    else:
-                        msg = 'no more data from {0}:{1}'.format(*addr)
-                        print(msg, log_buffer)
+                    buf = conn.recv(4096)
+                    data += buf.decode('utf8')
+                    if '\r\n\r\n' in data:
                         break
+
+                print('received "{0}"'.format(data), file=log_buffer)
+
+                if data:
+                    try:
+                        uri = parse_request(data)
+                        uri_content, uri_mime = resolve_uri(uri)
+                        response = response_ok(uri_content, uri_mime)
+                    except NotImplementedError:
+                        response = response_method_not_allowed()
+                    except NameError:
+                        response = response_not_found()
+                    except Exception as e:
+                        # Close connection.
+                        print('unhandled exception: ' + e, file=log_buffer)
+                        break
+
+                    conn.sendall(response)
+
+                else:
+                    msg = 'no more data from {0}:{1}'.format(*addr)
+                    print(msg, log_buffer)
+                    break
+
             finally:
+                # One request per connection, HTTP/1.0-style.
                 conn.close()
 
     except KeyboardInterrupt:
